@@ -1,0 +1,140 @@
+// 1. CONFIGURATION
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// --------------------------------------
+// 2. AUTHENTICATION (NextAuth Standard)
+// --------------------------------------
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  password      String?   // Added for Credentials (Email/Pass) login
+  image         String?
+  role          String    @default("MANAGER") // "ADMIN" or "MANAGER"
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --------------------------------------
+// 3. RESTAURANT DATA (POS Ingestion)
+// --------------------------------------
+
+model MenuItem {
+  id             String   @id @default(uuid())
+  name           String
+  category       String   // e.g. "Starters", "Mains", "Drinks"
+  costPrice      Float    // COGS
+  sellingPrice   Float
+  
+  // "Derived" sensitivity. 
+  // 1.0 = Normal, 1.5 = High Sensitivity (Drinks), 0.8 = Low (Signatures)
+  baseElasticity Float    @default(1.2) 
+
+  // Launch tracking
+  launchDate     DateTime? // When the item was first added to menu
+  prepTime       Int?      // Prep time in minutes
+  active         Boolean   @default(true)
+
+  orderItems     OrderItem[]
+}
+
+model Server {
+  id        String   @id @default(uuid())
+  name      String
+  orders    Order[]
+}
+
+model Order {
+  id          String   @id @default(uuid())
+  posOrderId  String   @unique // Prevents duplicate CSV uploads
+  timestamp   DateTime
+  channel     String   // "Walk-in", "UberEats", "Booking"
+  
+  // Optional details often found in POS data
+  tableNumber String?
+  guestCount  Int?
+  
+  serverId    String?
+  server      Server?  @relation(fields: [serverId], references: [id])
+  
+  items       OrderItem[]
+  
+  totalAmount Float
+  status      String   @default("COMPLETED") // "COMPLETED", "VOIDED"
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  menuItemId String
+
+  quantity   Int
+  price      Float   // ← ADD THIS
+
+  order      Order    @relation(fields: [orderId], references: [id])
+  menuItem   MenuItem @relation(fields: [menuItemId], references: [id])
+}
+
+
+// --------------------------------------
+// 4. SIMULATION ENGINE ("The Brain")
+// --------------------------------------
+
+model Scenario {
+  id                 String   @id @default(uuid())
+  name               String
+  createdAt          DateTime @default(now())
+  
+  // Inputs
+  priceChangePercent Float    // e.g. 0.10 for +10%
+  overrideElasticity Float?   // If null, the engine uses MenuItem.baseElasticity
+  
+  // Results (Cached)
+  projectedRevenue   Float
+  projectedProfit    Float
+  revenueDelta       Float    // projected - baseline
+}
